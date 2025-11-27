@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShareLinkX - P2P File Transfer</title>
+
+ <link rel="stylesheet" href="style.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+</head>
+
+<body>
+
+  <!-- ✨ HEADER WITH LOGO ✨ -->
+  <div class="header">
+    <div class="logo">↗️</div>
+    <div class="app-name">ShareLinkX</div>
+  </div>
+
+  <div class="controls">
+    <button id="createBtn">🎯 Create Session</button>
+    <input id="roomInput" placeholder="Enter room ID" />
+    <button id="joinBtn">🚀 Join Room</button>
+  </div>
+
+  <!-- 📳 POPUP : QR + Room ID -->
+  <div id="sessionPopup" class="hidden-popup">
+    <div class="popup-box">
+      <button id="closePopup" class="close-btn">✖</button>
+
+      <h3>Scan This QR To Connect</h3>
+
+      <p class="roomLabel">
+        Room ID: <b id="popupRoomId"></b>
+      </p>
+
+      <canvas id="popupQR"></canvas>
+    </div>
+  </div>
+
+  <div id="status"></div>
+
+  <div class="dropbox-container">
+      <div class="dropbox" id="dropArea">
+          <span class="plus">+</span>
+      </div>
+      <div class="drop-label">Drop or Click to Add Files</div>
+      <input type="file" id="fileInput" hidden multiple>
+  </div>
+
+  <div id="fileList"></div>
+  <div id="receiveList"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    // ------------------ SOCKET.IO ------------------
+    const socket = io();
+
+    const createBtn   = document.getElementById('createBtn');
+    const joinBtn     = document.getElementById('joinBtn');
+    const roomInput   = document.getElementById('roomInput');
+    const status      = document.getElementById('status');
+
+    const dropArea    = document.getElementById("dropArea");
+    const fileInput   = document.getElementById("fileInput");
+
+    const fileList    = document.getElementById('fileList');
+    const receiveList = document.getElementById('receiveList');
+
+    const sessionPopup = document.getElementById("sessionPopup");
+    const popupRoomId  = document.getElementById("popupRoomId");
+    const popupQR      = document.getElementById("popupQR");
+    const closePopup   = document.getElementById("closePopup");
+
+    let room         = null;
+    let pc           = null;
+    let dc           = null;
+    let isInitiator  = false;
+
+    const configuration = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        {
+          urls: [
+            "turn:openrelay.metered.ca:80",
+            "turn:openrelay.metered.ca:443",
+            "turn:openrelay.metered.ca:443?transport=tcp"
+          ],
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        }
+      ]
+    };
+
+    function openPopup(withRoomId) {
+      if (!withRoomId) return;
+      popupRoomId.textContent = withRoomId.toString();
+      const joinUrl = location.origin + '?room=' + withRoomId;
+      QRCode.toCanvas(popupQR, joinUrl, { width: 200 });
+      sessionPopup.classList.add('show');
+    }
+
+    function closePopupFn() {
+      sessionPopup.classList.remove('show');
+    }
+
+    closePopup.addEventListener('click', closePopupFn);
+
+    createBtn.onclick = () => {
+      socket.emit('create', (res) => {
+        room = res.room;
+        status.textContent = '💡 Room created successfully!';
+        isInitiator = true;
+        openPopup(room);
+        setupPeer();
+      });
+    };
+
+    joinBtn.onclick = async () => {
+      if (!roomInput.value) {
+        status.textContent = '⚠️ Please enter room ID';
+        return;
+      }
+      room = roomInput.value.trim();
+      socket.emit('join', { room }, (res) => {
+        if (!res.ok) {
+          status.textContent = '❌ Join failed: ' + res.error;
+          return;
+        }
+        status.textContent = '✅ Joined room: ' + room;
+        isInitiator = res.isInitiator;
+        setupPeer();
+      });
+    };
+
+    const params = new URLSearchParams(location.search);
+    if (params.get('room')) {
+      roomInput.value = params.get('room');
+    }
+
+    socket.on('signal', async ({ type, data }) => {
+      if (type === 'file-meta' || type === 'file-chunk') {
+        if (type === 'file-meta') startReceiveFile(data);
+        else {
+          const arr = new Uint8Array(data.chunk);
+          receiveChunk(arr.buffer);
+        }
+        return;
+      }
+
+      if (!pc) await setupPeer();
+
+      if (type === 'offer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', { room, type: 'answer', data: pc.localDescription });
+
+      } else if (type === 'answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+
+      } else if (type === 'ice') {
+        try { await pc.addIceCandidate(data); } catch (e) {
+          console.error('ICE add error', e);
+        }
+      }
+    });
+
+    socket.on('peer-left', () => {
+      status.textContent = '⚠️ Peer disconnected';
+    });
+
+    async function setupPeer() {
+      if (pc) return;
+
+      pc = new RTCPeerConnection(configuration);
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket.emit('signal', { room, type: 'ice', data: e.candidate });
+        }
+      };
+
+      pc.ondatachannel = (ev) => {
+        dc = ev.channel;
+        setupDataChannel();
+      };
+
+      if (isInitiator) {
+        dc = pc.createDataChannel('file');
+        setupDataChannel();
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('signal', { room, type: 'offer', data: pc.localDescription });
+      }
+    }
+
+    function setupDataChannel() {
+      if (!dc) return;
+
+      dc.binaryType = 'arraybuffer';
+
+      dc.onopen = () => {
+        status.textContent = '✨ Connected! Ready to send files.';
+        closePopupFn();
+      };
+
+      dc.onclose = () => {
+        status.textContent = '⚠️ Connection closed';
+      };
+
+      dc.onmessage = (ev) => {
+        if (typeof ev.data === "string") {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === "file-meta") startReceiveFile(msg);
+          } catch (err) {
+            console.error('JSON parse error', err);
+          }
+        } else {
+          receiveChunk(ev.data);
+        }
+      };
+    }
+
+    dropArea.onclick = () => fileInput.click();
+
+    dropArea.addEventListener("dragover", e => {
+      e.preventDefault();
+    });
+
+    dropArea.addEventListener("drop", e => {
+      e.preventDefault();
+      handleFiles(e.dataTransfer.files);
+    });
+
+    fileInput.onchange = () => handleFiles(fileInput.files);
+
+    function handleFiles(list) {
+      for (const f of list) {
+        addFileToList(f);
+      }
+    }
+
+    function addFileToList(file) {
+      const id = Math.random().toString(36).slice(2, 9);
+
+      const row = document.createElement("div");
+      row.style.position = "relative";
+
+      row.innerHTML = `
+        <b>${file.name}</b> <span style="color:#ddd;">(${file.size} bytes)</span>
+        <button class="sendBtn">Send</button>
+
+        <button class="deleteBtn" style="
+          display:none;
+          position:absolute;
+          right:10px;
+          top:32%;
+          transform:translateY(-50%);
+          background:#ff4b4b;
+          color:white;
+          border:none;
+          padding:5px 10px;
+          border-radius:50%;
+          font-size:16px;
+          cursor:pointer;">✖</button>
+
+        <progress value="0" max="${file.size}"></progress>
+      `;
+
+      const sendBtn   = row.querySelector(".sendBtn");
+      const deleteBtn = row.querySelector(".deleteBtn");
+      const prog      = row.querySelector("progress");
+
+      sendBtn.onclick = () => {
+        if (dc && dc.readyState === "open") {
+          sendFile(file, id, prog);
+        } else {
+          status.textContent = '📡 Using server fallback...';
+          sendFileViaSocket(file, id, prog);
+        }
+
+        sendBtn.style.display = "none";
+        deleteBtn.style.display = "inline-block";
+      };
+
+      deleteBtn.onclick = () => row.remove();
+
+      fileList.appendChild(row);
+    }
+
+    async function sendFile(file, fileId, progEl) {
+      const chunkSize = 64 * 1024;
+
+      const meta = {
+        type: 'file-meta',
+        name: file.name,
+        size: file.size,
+        mime: file.type,
+        fileId
+      };
+      dc.send(JSON.stringify(meta));
+
+      let offset = 0;
+      const reader = new FileReader();
+
+      reader.onload = async (e) => {
+        const data = e.target.result;
+        dc.send(data);
+        offset += data.byteLength;
+        progEl.value = offset;
+
+        while (dc.bufferedAmount > 2 * 1024 * 1024) {
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        if (offset < file.size) readSlice(offset);
+      };
+
+      const readSlice = (o) => {
+        const slice = file.slice(o, o + chunkSize);
+        reader.readAsArrayBuffer(slice);
+      };
+
+      readSlice(0);
+    }
+
+    function sendFileViaSocket(file, fileId, progEl) {
+      const chunkSize = 64 * 1024;
+      let offset = 0;
+
+      const reader = new FileReader();
+
+      reader.onload = (e) => {
+        socket.emit("signal", {
+          room,
+          type: "file-chunk",
+          data: {
+            id: fileId,
+            chunk: Array.from(new Uint8Array(e.target.result)),
+            last: (offset + chunkSize) >= file.size
+          }
+        });
+
+        offset += chunkSize;
+        progEl.value = offset;
+
+        if (offset < file.size) readSlice();
+      };
+
+      const readSlice = () => {
+        const slice = file.slice(offset, offset + chunkSize);
+        reader.readAsArrayBuffer(slice);
+      };
+
+      socket.emit("signal", {
+        room,
+        type: "file-meta",
+        data: { id: fileId, name: file.name, size: file.size, mime: file.type }
+      });
+
+      readSlice();
+    }
+
+    const incoming = {};
+
+    function startReceiveFile(meta) {
+      incoming[meta.fileId] = { meta, chunks: [], received: 0 };
+
+      const el = document.createElement("div");
+      el.id = "recv-" + meta.fileId;
+      el.style.position = "relative";
+
+      el.innerHTML = `
+        Receiving ${meta.name} (0 / ${meta.size})
+        <progress value="0" max="${meta.size}"></progress>
+
+        <button class="dlBtn" style="
+          display:none;
+          position:absolute;
+          right:10px;
+          top:32%;
+          transform:translateY(-50%);
+          background:#4facfe;
+          color:white;
+          border:none;
+          padding:6px 12px;
+          border-radius:10px;
+          cursor:pointer;">⬇️</button>
+      `;
+
+      receiveList.appendChild(el);
+    }
+
+    function receiveChunk(data) {
+      const keys = Object.keys(incoming);
+      if (!keys.length) return;
+
+      const fid = keys[0];
+      const info = incoming[fid];
+
+      info.chunks.push(data);
+      info.received += data.byteLength;
+
+      const el  = document.getElementById("recv-" + fid);
+      if (!el) return;
+
+      const prog = el.querySelector("progress");
+      prog.value = info.received;
+
+      if (info.received >= info.meta.size) {
+        const blob = new Blob(info.chunks, { type: info.meta.mime });
+        const url  = URL.createObjectURL(blob);
+
+        const dlBtn = el.querySelector(".dlBtn");
+        dlBtn.style.display = "inline-block";
+
+        dlBtn.onclick = () => {
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = info.meta.name;
+          a.click();
+        };
+
+        delete incoming[fid];
+      }
+    }
+  </script>
+</body>
+</html>
