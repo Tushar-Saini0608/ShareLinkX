@@ -1,0 +1,63 @@
+# Client-Side Todo List Application
+
+## 📌 Project Objective
+The objective of this project is to build a responsive Todo List application that runs completely in the browser. It allows users to manage their daily tasks efficiently without using any database.
+
+---
+
+## 📖 Project Description
+This Todo List application enables users to add, complete, and delete tasks.  
+All tasks are stored using **localStorage**, which ensures that the tasks remain saved even after refreshing or reopening the browser.
+
+The application also includes filters to view:
+- All tasks
+- Active tasks
+- Completed tasks
+
+---
+
+## 🛠 Technologies Used
+- HTML5
+- CSS3
+- JavaScript
+- Browser LocalStorage
+
+---
+
+## ⚙️ Setup Instructions
+1. Download or clone the project.
+2. Open the project folder.
+3. Double-click the **index.html** file.
+4. The Todo application will open in your browser.
+
+No installation or server is required.
+
+---
+
+## ✨ Features
+- Add new tasks
+- Mark tasks as completed
+- Delete tasks
+- Save tasks using localStorage
+- Filter tasks (All / Active / Completed)
+- Responsive design for mobile and desktop
+
+---
+
+## 📸 Screenshots
+(Add screenshots of your working project here)
+
+Example:
+![Todo App Screenshot](screenshot.png)
+
+---
+
+## ⚠️ Challenges Faced
+- Implementing task persistence using localStorage
+- Managing task states (completed vs active)
+- Creating dynamic elements using JavaScript DOM manipulation
+
+---
+
+## 📌 Conclusion
+This project demonstrates the use of HTML, CSS, and JavaScript to build an interactive web application that manages tasks effectively in the browser.
