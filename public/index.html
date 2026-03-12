@@ -12,7 +12,7 @@
 
 <body>
 
-  <!-- ✨ HEADER WITH LOGO ✨ -->
+  <!--  HEADER WITH LOGO -->
   <div class="header">
     <div class="logo">↗️</div>
     <div class="app-name">ShareLinkX</div>
@@ -24,7 +24,7 @@
     <button id="joinBtn">🚀 Join Room</button>
   </div>
 
-  <!-- 📳 POPUP : QR + Room ID -->
+  <!-- POPUP : QR + Room ID -->
   <div id="sessionPopup" class="hidden-popup">
     <div class="popup-box">
       <button id="closePopup" class="close-btn">✖</button>
@@ -280,7 +280,7 @@
         if (dc && dc.readyState === "open") {
           sendFile(file, id, prog);
         } else {
-          status.textContent = '📡 Using server fallback...';
+          status.textContent = '📡 Using datachannel...';
           sendFileViaSocket(file, id, prog);
         }
 
@@ -432,3 +432,8 @@
   </script>
 </body>
 </html>
+
+   
+
+
+
